@@ -1,3 +1,4 @@
+// версия 2.0
 const WebSocket = require("ws");
 const PORT = process.env.PORT || 3000;
 
@@ -8,22 +9,36 @@ console.log("Signaling server running on port", PORT);
 let rooms = {}; // { roomName: [sockets] }
 
 server.on("connection", socket => {
+
+    // Render иногда шлет ping → нужно отвечать
+    socket.on("ping", () => socket.pong());
+
     socket.on("message", msg => {
-        let data = JSON.parse(msg);
+        let data;
 
-        // пользователь присоединился к комнате
-        if (data.type === "join") {
-            const room = data.room;
-            socket.room = room;
-
-            if (!rooms[room]) rooms[room] = [];
-            rooms[room].push(socket);
-
-            console.log("User joined room:", room);
+        // Если пришёл Blob/buffer — превращаем в текст
+        try {
+            if (msg instanceof Buffer) {
+                msg = msg.toString();
+            }
+            data = JSON.parse(msg);
+        } catch (e) {
+            console.log("Non-JSON message, skipping");
             return;
         }
 
-        // рассылаем сообщения всем, кроме отправителя
+        // Присоединение к комнате
+        if (data.type === "join") {
+            socket.room = data.room;
+
+            if (!rooms[socket.room]) rooms[socket.room] = [];
+            rooms[socket.room].push(socket);
+
+            console.log("User joined room:", socket.room);
+            return;
+        }
+
+        // Пересылаем всем в комнате, кроме отправителя
         if (socket.room && rooms[socket.room]) {
             rooms[socket.room].forEach(s => {
                 if (s !== socket && s.readyState === WebSocket.OPEN) {
@@ -35,6 +50,7 @@ server.on("connection", socket => {
 
     socket.on("close", () => {
         if (!socket.room) return;
+
         rooms[socket.room] = rooms[socket.room].filter(s => s !== socket);
     });
 });
