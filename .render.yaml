@@ -2,5 +2,4 @@ services:
   - type: web
     name: webrtc-signaling-server
     env: node
-    buildCommand: ""
-    startCommand: "node server.js"
+    startCommand: "node index.js"
