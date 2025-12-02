@@ -1,4 +1,4 @@
-// версия 2.0
+// версия 2.1
 const WebSocket = require("ws");
 const PORT = process.env.PORT || 3000;
 
@@ -6,27 +6,24 @@ const server = new WebSocket.Server({ port: PORT });
 
 console.log("Signaling server running on port", PORT);
 
-let rooms = {}; // { roomName: [sockets] }
+let rooms = {};
 
 server.on("connection", socket => {
 
-    socket.on("ping", () => socket.pong());
+    socket.on("message", raw => {
+        // игнорируем ping/pong и другие бинарные сообщения от Render
+        if (raw instanceof Buffer) return;
 
-    socket.on("message", msg => {
         let data;
-
         try {
-            if (msg instanceof Buffer) {
-                msg = msg.toString();
-            }
-            data = JSON.parse(msg);
+            data = JSON.parse(raw.toString());
         } catch (e) {
-            console.log("Non-JSON message, skipping");
             return;
         }
 
         if (data.type === "join") {
             socket.room = data.room;
+
             if (!rooms[socket.room]) rooms[socket.room] = [];
             rooms[socket.room].push(socket);
 
@@ -45,6 +42,9 @@ server.on("connection", socket => {
 
     socket.on("close", () => {
         if (!socket.room) return;
-        rooms[socket.room] = rooms[socket.room].filter(s => s !== socket);
+
+        rooms[socket.room] =
+            rooms[socket.room].filter(s => s !== socket);
     });
 });
+
