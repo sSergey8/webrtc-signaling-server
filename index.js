@@ -10,13 +10,11 @@ let rooms = {}; // { roomName: [sockets] }
 
 server.on("connection", socket => {
 
-    // Render иногда шлет ping → нужно отвечать
     socket.on("ping", () => socket.pong());
 
     socket.on("message", msg => {
         let data;
 
-        // Если пришёл Blob/buffer — превращаем в текст
         try {
             if (msg instanceof Buffer) {
                 msg = msg.toString();
@@ -27,10 +25,8 @@ server.on("connection", socket => {
             return;
         }
 
-        // Присоединение к комнате
         if (data.type === "join") {
             socket.room = data.room;
-
             if (!rooms[socket.room]) rooms[socket.room] = [];
             rooms[socket.room].push(socket);
 
@@ -38,7 +34,6 @@ server.on("connection", socket => {
             return;
         }
 
-        // Пересылаем всем в комнате, кроме отправителя
         if (socket.room && rooms[socket.room]) {
             rooms[socket.room].forEach(s => {
                 if (s !== socket && s.readyState === WebSocket.OPEN) {
@@ -50,7 +45,6 @@ server.on("connection", socket => {
 
     socket.on("close", () => {
         if (!socket.room) return;
-
         rooms[socket.room] = rooms[socket.room].filter(s => s !== socket);
     });
 });
