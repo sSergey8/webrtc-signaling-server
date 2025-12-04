@@ -33,10 +33,16 @@ server.on("connection", socket => {
             console.log(`User joined room ${socket.room}, count: ${count}`);
 
             // отвечаем ТОЛЬКО этому клиенту
-            socket.send(JSON.stringify({
-                type: "joined",
-                count: count
-            }));
+            // Уведомляем всех в комнате
+rooms[socket.room].forEach(s => {
+    if (s.readyState === WebSocket.OPEN) {
+        s.send(JSON.stringify({
+            type: "joined",
+            count: rooms[socket.room].length
+        }));
+    }
+});
+
 
             return;
         }
