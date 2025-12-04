@@ -1,5 +1,4 @@
-// версия 3.1
-// index.js — signaling server v3.1
+// версия 3.2
 const WebSocket = require("ws");
 const PORT = process.env.PORT || 3000;
 
@@ -102,22 +101,27 @@ server.on("connection", socket => {
             const count = rooms[socket.room].length;
             console.log(`User joined room ${socket.room}, count: ${count}`);
 
-            // УВЕДОМИМ ВСЕХ в комнате о текущем количестве
-            broadcastToRoom(socket.room, {
+            // IMPORTANT CHANGE: send "joined" ONLY to the socket that just joined.
+            // That way the second-joined client receives count===2 and becomes initiator.
+            safeSend(socket, {
                 type: "joined",
                 count: count
             });
+
+            // Optionally, notify existing peers that someone joined (without making them initiator)
+            // e.g. broadcast to others that a new peer is present (so UI can show status)
+            broadcastToRoom(socket.room, {
+                type: "peer-joined",
+                count: count
+            }, socket);
 
             return;
         }
 
         // ========== FORWARD SIGNALING ==========
-        // Только если сокет привязан к комнате
         if (socket.room && rooms[socket.room]) {
-            // допустимые типы для форварда: offer, answer, candidate, bye (можно расширять)
             const allowedForward = ["offer", "answer", "candidate", "bye"];
             if (allowedForward.includes(data.type)) {
-                // Форвардим только другим клиентам в той же комнате
                 rooms[socket.room].forEach(s => {
                     if (s !== socket && s.readyState === WebSocket.OPEN) {
                         try {
@@ -145,7 +149,7 @@ server.on("connection", socket => {
         rooms[socket.room] = roomArr.filter(s => s !== socket);
 
         // If there are still peers left, notify them of updated count
-        if (rooms[socket.room].length > 0) {
+        if (rooms[socket.room] && rooms[socket.room].length > 0) {
             broadcastToRoom(socket.room, {
                 type: "joined",
                 count: rooms[socket.room].length
@@ -162,4 +166,3 @@ server.on("connection", socket => {
         console.warn("Socket error:", err && err.message ? err.message : err);
     });
 });
-
