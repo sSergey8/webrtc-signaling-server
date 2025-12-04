@@ -1,4 +1,5 @@
-// версия 3.0
+// версия 3.1
+// index.js — signaling server v3.1
 const WebSocket = require("ws");
 const PORT = process.env.PORT || 3000;
 
@@ -6,54 +7,131 @@ const server = new WebSocket.Server({ port: PORT });
 
 console.log("Signaling server running on port", PORT);
 
-// { roomName: [socket, socket] }
+// { roomName: [socket, socket, ...] }
 let rooms = {};
 
+// helper: sanitize room name
+function normalizeRoomName(name) {
+    if (!name || typeof name !== "string") return null;
+    const trimmed = name.trim();
+    if (trimmed.length === 0) return null;
+    // basic whitelist: letters, digits, hyphen, underscore
+    const safe = trimmed.replace(/[^a-zA-Z0-9-_]/g, "");
+    return safe || null;
+}
+
+// send JSON safely
+function safeSend(ws, obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+            ws.send(JSON.stringify(obj));
+        } catch (e) {
+            console.error("safeSend error:", e);
+        }
+    }
+}
+
+// broadcast to all in room (optionally exclude one socket)
+function broadcastToRoom(roomName, messageObj, excludeSocket = null) {
+    const arr = rooms[roomName];
+    if (!arr || !Array.isArray(arr)) return;
+    arr.forEach(s => {
+        if (s !== excludeSocket && s.readyState === WebSocket.OPEN) {
+            safeSend(s, messageObj);
+        }
+    });
+}
+
+// Periodic ping to clean dead sockets
+const PING_INTERVAL = 30000; // 30s
+setInterval(() => {
+    Object.keys(rooms).forEach(roomName => {
+        rooms[roomName].forEach(ws => {
+            try {
+                if (ws.isAlive === false) {
+                    console.log("Terminating dead socket in room", roomName);
+                    ws.terminate();
+                    return;
+                }
+                ws.isAlive = false;
+                ws.ping(() => {});
+            } catch (e) {
+                console.error("Ping error:", e);
+            }
+        });
+    });
+}, PING_INTERVAL);
+
 server.on("connection", socket => {
+    socket.isAlive = true;
+    socket.on("pong", () => { socket.isAlive = true; });
 
     socket.on("message", raw => {
+        // ignore binary (we expect text)
         if (raw instanceof Buffer) return;
 
         let data;
         try {
             data = JSON.parse(raw.toString());
-        } catch {
+        } catch (err) {
+            console.warn("Invalid JSON from client, ignoring:", raw.toString());
+            return;
+        }
+
+        if (!data || typeof data.type !== "string") {
+            console.warn("Malformed message (no type):", data);
             return;
         }
 
         // ========== JOIN ROOM ==========
         if (data.type === "join") {
-            socket.room = data.room;
+            const roomRequested = normalizeRoomName(data.room || "");
+            if (!roomRequested) {
+                safeSend(socket, { type: "error", message: "Invalid room" });
+                return;
+            }
+
+            socket.room = roomRequested;
 
             if (!rooms[socket.room]) rooms[socket.room] = [];
-            rooms[socket.room].push(socket);
+            // prevent duplicate same-socket entries
+            if (!rooms[socket.room].includes(socket)) {
+                rooms[socket.room].push(socket);
+            }
 
             const count = rooms[socket.room].length;
-
             console.log(`User joined room ${socket.room}, count: ${count}`);
 
-            // отвечаем ТОЛЬКО этому клиенту
-            // Уведомляем всех в комнате
-rooms[socket.room].forEach(s => {
-    if (s.readyState === WebSocket.OPEN) {
-        s.send(JSON.stringify({
-            type: "joined",
-            count: rooms[socket.room].length
-        }));
-    }
-});
-
+            // УВЕДОМИМ ВСЕХ в комнате о текущем количестве
+            broadcastToRoom(socket.room, {
+                type: "joined",
+                count: count
+            });
 
             return;
         }
 
         // ========== FORWARD SIGNALING ==========
+        // Только если сокет привязан к комнате
         if (socket.room && rooms[socket.room]) {
-            rooms[socket.room].forEach(s => {
-                if (s !== socket && s.readyState === WebSocket.OPEN) {
-                    s.send(JSON.stringify(data));
-                }
-            });
+            // допустимые типы для форварда: offer, answer, candidate, bye (можно расширять)
+            const allowedForward = ["offer", "answer", "candidate", "bye"];
+            if (allowedForward.includes(data.type)) {
+                // Форвардим только другим клиентам в той же комнате
+                rooms[socket.room].forEach(s => {
+                    if (s !== socket && s.readyState === WebSocket.OPEN) {
+                        try {
+                            s.send(JSON.stringify(data));
+                        } catch (e) {
+                            console.error("Error forwarding message:", e);
+                        }
+                    }
+                });
+            } else {
+                console.warn("Unknown/unsupported message type to forward:", data.type);
+            }
+        } else {
+            console.warn("Received signaling message but socket is not in a room:", data.type);
         }
     });
 
@@ -61,10 +139,27 @@ rooms[socket.room].forEach(s => {
     socket.on("close", () => {
         if (!socket.room) return;
 
-        rooms[socket.room] = rooms[socket.room].filter(s => s !== socket);
+        const roomArr = rooms[socket.room];
+        if (!roomArr) return;
 
-        if (rooms[socket.room].length === 0) {
+        rooms[socket.room] = roomArr.filter(s => s !== socket);
+
+        // If there are still peers left, notify them of updated count
+        if (rooms[socket.room].length > 0) {
+            broadcastToRoom(socket.room, {
+                type: "joined",
+                count: rooms[socket.room].length
+            });
+        } else {
+            // no peers left — clear room
             delete rooms[socket.room];
         }
+
+        console.log(`Socket left room ${socket.room}. New count: ${rooms[socket.room] ? rooms[socket.room].length : 0}`);
+    });
+
+    socket.on("error", (err) => {
+        console.warn("Socket error:", err && err.message ? err.message : err);
     });
 });
+
