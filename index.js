@@ -1,4 +1,4 @@
-// версия 2.1
+// версия 3.0
 const WebSocket = require("ws");
 const PORT = process.env.PORT || 3000;
 
@@ -6,31 +6,42 @@ const server = new WebSocket.Server({ port: PORT });
 
 console.log("Signaling server running on port", PORT);
 
+// { roomName: [socket, socket] }
 let rooms = {};
 
 server.on("connection", socket => {
 
     socket.on("message", raw => {
-        // игнорируем ping/pong и другие бинарные сообщения от Render
         if (raw instanceof Buffer) return;
 
         let data;
         try {
             data = JSON.parse(raw.toString());
-        } catch (e) {
+        } catch {
             return;
         }
 
+        // ========== JOIN ROOM ==========
         if (data.type === "join") {
             socket.room = data.room;
 
             if (!rooms[socket.room]) rooms[socket.room] = [];
             rooms[socket.room].push(socket);
 
-            console.log("User joined room:", socket.room);
+            const count = rooms[socket.room].length;
+
+            console.log(`User joined room ${socket.room}, count: ${count}`);
+
+            // отвечаем ТОЛЬКО этому клиенту
+            socket.send(JSON.stringify({
+                type: "joined",
+                count: count
+            }));
+
             return;
         }
 
+        // ========== FORWARD SIGNALING ==========
         if (socket.room && rooms[socket.room]) {
             rooms[socket.room].forEach(s => {
                 if (s !== socket && s.readyState === WebSocket.OPEN) {
@@ -40,11 +51,14 @@ server.on("connection", socket => {
         }
     });
 
+    // ========== HANDLE DISCONNECT ==========
     socket.on("close", () => {
         if (!socket.room) return;
 
-        rooms[socket.room] =
-            rooms[socket.room].filter(s => s !== socket);
+        rooms[socket.room] = rooms[socket.room].filter(s => s !== socket);
+
+        if (rooms[socket.room].length === 0) {
+            delete rooms[socket.room];
+        }
     });
 });
-
