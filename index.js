@@ -1,4 +1,4 @@
-// версия 3.3
+// версия 3.0
 const WebSocket = require("ws");
 const PORT = process.env.PORT || 3000;
 
