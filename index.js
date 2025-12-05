@@ -1,4 +1,7 @@
 // версия 3.0
+console.log("process.env.PORT =", process.env.PORT);
+console.log("server listening on", PORT);
+
 const WebSocket = require("ws");
 const PORT = process.env.PORT || 3000;
 
